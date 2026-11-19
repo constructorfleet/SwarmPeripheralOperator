@@ -7,7 +7,7 @@ Each phase starts only after the previous exit gate is recorded as passed in its
 - [x] Engine/Swarm capability research (ADR 0001 facts F1-F8)
 - [x] Runtime wrapper PoC (#5), controller PoC (#6)
 - [x] Two-node Swarm feasibility suite (#7)
-- [ ] Compatibility matrix across Engine versions (#3)
+- [x] Compatibility matrix across Engine versions (#3): Engine 25-29 pass
 - [ ] Hardware-in-the-loop: NVIDIA GPU and USB (#8). **Blocked: hardware.**
 - [ ] Gate decision recorded on #1
 
