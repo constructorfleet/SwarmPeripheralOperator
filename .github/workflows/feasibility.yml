@@ -1,0 +1,39 @@
+name: feasibility
+
+# Phase 0 gate evidence. Changes to these paths can invalidate the proven integration.
+on:
+  pull_request:
+    paths:
+      - "cmd/**"
+      - "internal/**"
+      - "pkg/**"
+      - "tests/integration/**"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/feasibility.yml"
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  swarm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        dind: ["docker:29-dind", "docker:28-dind"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - name: Host devices
+        run: ls -l /dev/hwrng /dev/full /dev/ttyS0 /dev/ttyS1 || true
+      - name: Feasibility suite
+        env:
+          SPO_DIND_IMAGE: ${{ matrix.dind }}
+        run: make integration
