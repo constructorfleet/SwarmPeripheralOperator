@@ -44,8 +44,11 @@ func TestFindRuncSkipsSelfAndMissing(t *testing.T) {
 	if err != nil || got != real {
 		t.Fatalf("FindRunc = %q, %v", got, err)
 	}
-	if got, _ := FindRunc("/opt/runc", self, nil); got != "/opt/runc" {
-		t.Fatalf("configured path ignored: %q", got)
+	if got, err := FindRunc(real, self, nil); got != real || err != nil {
+		t.Fatalf("configured path ignored: %q %v", got, err)
+	}
+	if _, err := FindRunc(self, self, nil); err == nil {
+		t.Fatal("configured runc pointing at the wrapper would exec-loop")
 	}
 	if _, err := FindRunc("", self, []string{self}); err == nil {
 		t.Fatal("found only self")

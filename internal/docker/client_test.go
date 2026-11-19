@@ -44,14 +44,14 @@ func TestContainerLabelsRequiresExactIDMatch(t *testing.T) {
 		if !strings.Contains(r.URL.Query().Get("filters"), cid) {
 			t.Errorf("filters = %q", r.URL.Query().Get("filters"))
 		}
-		_, _ = w.Write([]byte(`[{"Id":"` + cidOther + `","Labels":{"x":"wrong"}},{"Id":"` + cid + `","Labels":{"x":"right"}}]`))
+		_, _ = w.Write([]byte(`[{"Id":"` + cidOther + `","Names":["/a"],"Labels":{"x":"wrong"}},{"Id":"` + cid + `","Names":["/svc.1.t"],"Labels":{"x":"right"}}]`))
 	})
-	labels, err := c.ContainerLabels(context.Background(), cid)
+	ctr, err := c.Container(context.Background(), cid)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if labels["x"] != "right" {
-		t.Fatalf("labels = %v, want exact-ID container", labels)
+	if ctr.Labels["x"] != "right" || ctr.Name != "/svc.1.t" {
+		t.Fatalf("container = %+v, want exact-ID container", ctr)
 	}
 }
 
@@ -59,7 +59,7 @@ func TestContainerLabelsNotFound(t *testing.T) {
 	c := serve(t, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`[{"Id":"` + cidOther + `"}]`))
 	})
-	if _, err := c.ContainerLabels(context.Background(), cid); !errors.Is(err, ErrNotFound) {
+	if _, err := c.Container(context.Background(), cid); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
 }
@@ -69,8 +69,8 @@ func TestRejectsMalformedIDsWithoutRequest(t *testing.T) {
 		t.Errorf("unexpected request %s", r.URL)
 	})
 	for _, id := range []string{"", "../../info", "ABC", strings.Repeat("a", 65)} {
-		if _, err := c.ContainerLabels(context.Background(), id); err == nil {
-			t.Errorf("ContainerLabels(%q) succeeded", id)
+		if _, err := c.Container(context.Background(), id); err == nil {
+			t.Errorf("Container(%q) succeeded", id)
 		}
 		if _, err := c.Task(context.Background(), id); err == nil {
 			t.Errorf("Task(%q) succeeded", id)
@@ -85,6 +85,7 @@ func TestTaskParsesAssignedGenericResources(t *testing.T) {
 		}
 		_, _ = w.Write([]byte(`{"ID":"xiq3arhllh8u9g9z67bcz7m0s","ServiceID":"svc1","NodeID":"node1",
 			"DesiredState":"running","Version":{"Index":42},
+			"Status":{"ContainerStatus":{"ContainerID":"abc"}},
 			"GenericResources":[{"NamedResourceSpec":{"Kind":"SPO_RNG","Value":"hwrng"}},
 			                    {"DiscreteResourceSpec":{"Kind":"SPO_MEM","Value":2}}]}`))
 	})
@@ -92,7 +93,7 @@ func TestTaskParsesAssignedGenericResources(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if task.ServiceID != "svc1" || task.NodeID != "node1" || task.DesiredState != "running" || task.Version != 42 {
+	if task.ServiceID != "svc1" || task.NodeID != "node1" || task.DesiredState != "running" || task.Version != 42 || task.ContainerID != "abc" {
 		t.Fatalf("task = %+v", task)
 	}
 	if len(task.Named) != 1 || task.Named[0].Kind != "SPO_RNG" || task.Named[0].ID != "hwrng" {

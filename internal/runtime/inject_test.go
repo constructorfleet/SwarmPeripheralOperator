@@ -69,6 +69,11 @@ func TestInjectUnknownDeviceFails(t *testing.T) {
 	}
 }
 
+// allowedLib is an allowlisted mount prefix that exists on every test host.
+const allowedLib = "/usr"
+
+func allowLib(p *Policy) { p.AllowedMountPrefixes = []string{allowedLib} }
+
 func TestPolicyRejections(t *testing.T) {
 	var st unix.Stat_t
 	if err := unix.Stat("/dev/null", &st); err != nil {
@@ -87,6 +92,8 @@ func TestPolicyRejections(t *testing.T) {
 		"major mismatch":         {want: "does not match host", edits: `"deviceNodes":[{"path":"/dev/null","type":"c","major":` + itoa(major+1) + `,"minor":` + itoa(minor) + `}]`},
 		"denied device":          {want: "is denied", edits: `"deviceNodes":[{"path":"/dev/null"}]`, policy: func(p *Policy) { p.Denied = []DeviceNumber{{Major: major, Minor: minor}} }},
 		"mount not allowed":      {want: "outside allowed prefixes", edits: `"mounts":[{"hostPath":"/etc","containerPath":"/host-etc"}]`},
+		"mount type overlay":     {want: "mount type", edits: `"mounts":[{"hostPath":"` + allowedLib + `","containerPath":"/x","type":"overlay","options":["lowerdir=/etc"]}]`, policy: allowLib},
+		"mount option":           {want: "mount option", edits: `"mounts":[{"hostPath":"` + allowedLib + `","containerPath":"/x","options":["rbind","suid"]}]`, policy: allowLib},
 		"net device":             {want: "not permitted", edits: `"netDevices":[{"hostInterfaceName":"eth0","name":"eth1"}]`},
 	}
 	for name, tc := range cases {
@@ -134,7 +141,7 @@ func TestPolicyAllowsListedHooksAndMounts(t *testing.T) {
 	p.AllowedMountPrefixes = []string{lib}
 	spec := `{"cdiVersion":"0.6.0","kind":"spo.local/rng",
 	  "containerEdits":{"hooks":[{"hookName":"createContainer","path":"/usr/bin/nvidia-cdi-hook"}]},
-	  "devices":[{"name":"d","containerEdits":{"mounts":[{"hostPath":"` + lib + `","containerPath":"/lib/x"}],"deviceNodes":[{"path":"/dev/null"}]}}]}`
+	  "devices":[{"name":"d","containerEdits":{"mounts":[{"hostPath":"` + lib + `","containerPath":"/lib/x","type":"bind","options":["ro","nosuid","nodev","rbind","rprivate"]}],"deviceNodes":[{"path":"/dev/null"}]}}]}`
 	s := &oci.Spec{}
 	if err := newInjector(t, spec, p).Inject(s, []string{"spo.local/rng=d"}); err != nil {
 		t.Fatal(err)

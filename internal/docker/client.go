@@ -47,32 +47,43 @@ func New(socket string) *Client {
 	}}
 }
 
-// ContainerLabels returns labels for the container with exactly this ID.
+// Container is the subset of a local container SPO reads.
+type Container struct {
+	Name   string
+	Labels map[string]string
+}
+
+// Container returns the container with exactly this ID.
 //
 // Uses the list endpoint: inspect blocks on the container lock that dockerd holds during runtime create.
-func (c *Client) ContainerLabels(ctx context.Context, id string) (map[string]string, error) {
+func (c *Client) Container(ctx context.Context, id string) (Container, error) {
 	if !containerIDPattern.MatchString(id) {
-		return nil, fmt.Errorf("invalid container id %q", id)
+		return Container{}, fmt.Errorf("invalid container id %q", id)
 	}
 	filters, err := json.Marshal(map[string][]string{"id": {id}})
 	if err != nil {
-		return nil, err
+		return Container{}, err
 	}
 	q := url.Values{"all": {"1"}, "filters": {string(filters)}}
 	var list []struct {
 		ID     string            `json:"Id"`
+		Names  []string          `json:"Names"`
 		Labels map[string]string `json:"Labels"`
 	}
 	if err := c.get(ctx, "/containers/json?"+q.Encode(), &list); err != nil {
-		return nil, err
+		return Container{}, err
 	}
 	// The id filter matches prefixes.
 	for _, ctr := range list {
 		if ctr.ID == id {
-			return ctr.Labels, nil
+			out := Container{Labels: ctr.Labels}
+			if len(ctr.Names) > 0 {
+				out.Name = ctr.Names[0]
+			}
+			return out, nil
 		}
 	}
-	return nil, fmt.Errorf("container %s: %w", id, ErrNotFound)
+	return Container{}, fmt.Errorf("container %s: %w", id, ErrNotFound)
 }
 
 // Task is the subset of a Swarm task SPO trusts. Only managers serve it.
@@ -82,6 +93,7 @@ type Task struct {
 	NodeID       string
 	DesiredState string
 	Version      uint64
+	ContainerID  string
 	Named        []api.Assignment
 }
 
@@ -96,6 +108,9 @@ func (c *Client) Task(ctx context.Context, id string) (Task, error) {
 		NodeID       string
 		DesiredState string
 		Version      struct{ Index uint64 }
+		Status       struct {
+			ContainerStatus *struct{ ContainerID string }
+		}
 		// Swarm records the scheduler's per-task binding here, not in Spec.
 		GenericResources []struct {
 			NamedResourceSpec *struct{ Kind, Value string }
@@ -105,6 +120,9 @@ func (c *Client) Task(ctx context.Context, id string) (Task, error) {
 		return Task{}, err
 	}
 	t := Task{ID: raw.ID, ServiceID: raw.ServiceID, NodeID: raw.NodeID, DesiredState: raw.DesiredState, Version: raw.Version.Index}
+	if raw.Status.ContainerStatus != nil {
+		t.ContainerID = raw.Status.ContainerStatus.ContainerID
+	}
 	for _, r := range raw.GenericResources {
 		if r.NamedResourceSpec != nil {
 			t.Named = append(t.Named, api.Assignment{Kind: r.NamedResourceSpec.Kind, ID: r.NamedResourceSpec.Value})

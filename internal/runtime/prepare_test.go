@@ -59,6 +59,17 @@ func TestPreparePassthroughLeavesBundleUntouched(t *testing.T) {
 	}
 }
 
+func TestPreparePassthroughToleratesSpecsTypedParsingRejects(t *testing.T) {
+	dir := t.TempDir()
+	orig := []byte(`{"process":{"env":["PATH=/bin"]},"linux":{"resources":{"memory":{"limit":"not-a-number"}}}}`)
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), orig, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := newPreparer(&fakeSource{}, &recordingInjector{}, &bytes.Buffer{}).Prepare(context.Background(), dir, ctrID); err != nil {
+		t.Fatalf("passthrough failed on spec it need not parse: %v", err)
+	}
+}
+
 func TestPrepareInjectsAndAudits(t *testing.T) {
 	dir, _ := bundleWithEnv(t, "DOCKER_RESOURCE_SPO_RNG=hwrng")
 	inj := &recordingInjector{}

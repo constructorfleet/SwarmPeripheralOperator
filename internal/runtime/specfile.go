@@ -11,7 +11,8 @@ import (
 )
 
 // EditSpecFile applies fn to an OCI config.json and writes it back atomically.
-// Fields unknown to the runtime-spec types survive; dockerd may emit a newer spec.
+// Unknown object fields survive the merge. Arrays are replaced whole, so unknown
+// fields inside array elements would be lost; the edit is refused instead.
 func EditSpecFile(path string, fn func(*oci.Spec) error) error {
 	fi, err := os.Stat(path)
 	if err != nil {
@@ -33,6 +34,9 @@ func EditSpecFile(path string, fn func(*oci.Spec) error) error {
 	if err != nil {
 		return err
 	}
+	if lost := lostArrayField(original, mustRoundTrip(data), "", false); lost != "" {
+		return fmt.Errorf("spec field %s is unknown to runtime-spec %s; refusing to edit", lost, oci.Version)
+	}
 	typed, err := json.Marshal(&spec)
 	if err != nil {
 		return err
@@ -46,6 +50,70 @@ func EditSpecFile(path string, fn func(*oci.Spec) error) error {
 		return err
 	}
 	return writeAtomic(path, out, fi.Mode().Perm())
+}
+
+// mustRoundTrip re-encodes data through the typed spec without edits.
+func mustRoundTrip(data []byte) any {
+	var spec oci.Spec
+	if err := json.Unmarshal(data, &spec); err != nil {
+		return nil
+	}
+	out, err := json.Marshal(&spec)
+	if err != nil {
+		return nil
+	}
+	v, _ := decodeGeneric(out)
+	return v
+}
+
+// lostArrayField returns the path of a non-zero field inside an array element that typed misses.
+func lostArrayField(orig, typed any, path string, inArray bool) string {
+	switch o := orig.(type) {
+	case map[string]any:
+		t, _ := typed.(map[string]any)
+		for k, v := range o {
+			tv, present := t[k]
+			if !present {
+				if inArray && !isZero(v) {
+					return path + "." + k
+				}
+				continue
+			}
+			if lost := lostArrayField(v, tv, path+"."+k, inArray); lost != "" {
+				return lost
+			}
+		}
+	case []any:
+		t, _ := typed.([]any)
+		for i, v := range o {
+			var tv any
+			if i < len(t) {
+				tv = t[i]
+			}
+			if lost := lostArrayField(v, tv, fmt.Sprintf("%s[%d]", path, i), true); lost != "" {
+				return lost
+			}
+		}
+	}
+	return ""
+}
+
+func isZero(v any) bool {
+	switch x := v.(type) {
+	case nil:
+		return true
+	case bool:
+		return !x
+	case string:
+		return x == ""
+	case json.Number:
+		return x.String() == "0"
+	case []any:
+		return len(x) == 0
+	case map[string]any:
+		return len(x) == 0
+	}
+	return false
 }
 
 // decodeGeneric keeps numbers exact; float64 would corrupt large int64 limits.

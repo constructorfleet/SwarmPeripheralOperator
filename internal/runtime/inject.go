@@ -139,7 +139,18 @@ func (p Policy) checkEdits(e *specs.ContainerEdits) error {
 	return nil
 }
 
+// Bind mounts only; options that could restore setuid or device access are excluded.
+var allowedMountOptions = []string{"bind", "rbind", "ro", "rw", "nosuid", "nodev", "noexec", "private", "rprivate", "slave", "rslave"}
+
 func (p Policy) checkMount(m *specs.Mount) error {
+	if m.Type != "" && m.Type != "bind" {
+		return fmt.Errorf("mount type %q is not permitted", m.Type)
+	}
+	for _, o := range m.Options {
+		if !slices.Contains(allowedMountOptions, o) {
+			return fmt.Errorf("mount option %q is not permitted", o)
+		}
+	}
 	if !isCleanAbs(m.ContainerPath) {
 		return fmt.Errorf("mount container path %q is not clean and absolute", m.ContainerPath)
 	}

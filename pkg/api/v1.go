@@ -11,10 +11,12 @@ type Assignment struct {
 // Allocation is the controller's authoritative answer for one task.
 // TaskVersion is the Swarm object version; it acts as a fencing token.
 type Allocation struct {
-	TaskID      string       `json:"taskId"`
-	ServiceID   string       `json:"serviceId"`
-	NodeID      string       `json:"nodeId"`
-	TaskVersion uint64       `json:"taskVersion"`
+	TaskID      string `json:"taskId"`
+	ServiceID   string `json:"serviceId"`
+	NodeID      string `json:"nodeId"`
+	TaskVersion uint64 `json:"taskVersion"`
+	// ContainerID is the manager's record of the task container, if already reported.
+	ContainerID string       `json:"containerId,omitempty"`
 	Assignments []Assignment `json:"assignments"`
 }
 

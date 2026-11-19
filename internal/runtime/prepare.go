@@ -2,8 +2,10 @@ package runtime
 
 import (
 	"context"
-	"errors"
+	"encoding/json"
+	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 
 	oci "github.com/opencontainers/runtime-spec/specs-go"
@@ -21,32 +23,43 @@ type Preparer struct {
 	Audit    *slog.Logger
 }
 
-var errUnchanged = errors.New("unchanged")
+func readEnv(path string) ([]string, error) {
+	data, err := os.ReadFile(path) //nolint:gosec // bundle path comes from the containerd shim
+	if err != nil {
+		return nil, err
+	}
+	var s struct {
+		Process struct {
+			Env []string `json:"env"`
+		} `json:"process"`
+	}
+	if err := json.Unmarshal(data, &s); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	return s.Process.Env, nil
+}
 
 // Prepare resolves and injects devices into bundle/config.json. On error the bundle is untouched.
+// Passthrough reads only process.env, so it cannot fail on spec fields SPO does not use.
 func (p *Preparer) Prepare(ctx context.Context, bundle, containerID string) error {
-	var plan Plan
-	err := EditSpecFile(filepath.Join(bundle, "config.json"), func(s *oci.Spec) error {
-		var env []string
-		if s.Process != nil {
-			env = s.Process.Env
-		}
-		var err error
-		if plan, err = p.Resolver.Resolve(ctx, containerID, env); err != nil {
-			return err
-		}
-		if plan.Passthrough {
-			return errUnchanged
-		}
-		if s.Linux == nil {
-			s.Linux = &oci.Linux{}
-		}
-		return p.Injector.Inject(s, plan.Devices)
-	})
-	switch {
-	case errors.Is(err, errUnchanged):
+	path := filepath.Join(bundle, "config.json")
+	env, err := readEnv(path)
+	if err != nil {
+		return err
+	}
+	plan, err := p.Resolver.Resolve(ctx, containerID, env)
+	if err == nil && plan.Passthrough {
 		return nil
-	case err != nil:
+	}
+	if err == nil {
+		err = EditSpecFile(path, func(s *oci.Spec) error {
+			if s.Linux == nil {
+				s.Linux = &oci.Linux{}
+			}
+			return p.Injector.Inject(s, plan.Devices)
+		})
+	}
+	if err != nil {
 		p.Audit.LogAttrs(ctx, slog.LevelError, "device injection rejected", slog.String("decision", "reject"),
 			slog.String("container", containerID), slog.String("task", plan.TaskID), slog.String("error", err.Error()))
 		return err

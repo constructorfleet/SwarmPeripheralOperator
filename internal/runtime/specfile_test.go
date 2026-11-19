@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	oci "github.com/opencontainers/runtime-spec/specs-go"
@@ -59,6 +60,32 @@ func TestEditSpecFilePreservesUnknownFields(t *testing.T) {
 	}
 	if fi, _ := os.Stat(p); fi.Mode().Perm() != 0o640 {
 		t.Fatalf("mode = %v, want 0640", fi.Mode().Perm())
+	}
+}
+
+func TestEditSpecFileRefusesToDropUnknownArrayFields(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.json")
+	orig := `{"ociVersion":"1.3.0","mounts":[{"destination":"/x","source":"/y","futureField":"keep"}],"linux":{}}`
+	if err := os.WriteFile(p, []byte(orig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := EditSpecFile(p, func(*oci.Spec) error { return nil })
+	if err == nil || !strings.Contains(err.Error(), "futureField") {
+		t.Fatalf("err = %v, want refusal naming futureField", err)
+	}
+	if data, _ := os.ReadFile(p); string(data) != orig { //nolint:gosec // test path
+		t.Fatal("file changed")
+	}
+}
+
+func TestEditSpecFileToleratesOmittedZeroValues(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.json")
+	orig := `{"ociVersion":"1.3.0","mounts":[{"destination":"/x","source":"/y","options":[],"uidMappings":null}],"linux":{}}`
+	if err := os.WriteFile(p, []byte(orig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := EditSpecFile(p, func(*oci.Spec) error { return nil }); err != nil {
+		t.Fatalf("zero values treated as loss: %v", err)
 	}
 }
 

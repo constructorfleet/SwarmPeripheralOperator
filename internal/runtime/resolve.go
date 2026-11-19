@@ -10,10 +10,12 @@ import (
 
 	"tags.cncf.io/container-device-interface/pkg/parser"
 
+	"github.com/constructorfleet/SwarmPeripheralOperator/internal/docker"
 	"github.com/constructorfleet/SwarmPeripheralOperator/pkg/api"
 )
 
-// Labels written by the Swarm executor. It overwrites user-supplied values for these keys.
+// Labels written by the Swarm executor for its tasks. Image LABELs can set them on non-Swarm
+// containers, so they are trusted only together with a Swarm-form container name.
 const (
 	LabelTaskID    = "com.docker.swarm.task.id"
 	LabelServiceID = "com.docker.swarm.service.id"
@@ -29,9 +31,9 @@ var (
 	ErrUnauthorized     = errors.New("task has no SPO assignment for requested kind")
 )
 
-// Labeler reads labels of a local container from dockerd.
+// Labeler reads a local container from dockerd.
 type Labeler interface {
-	ContainerLabels(ctx context.Context, containerID string) (map[string]string, error)
+	Container(ctx context.Context, containerID string) (docker.Container, error)
 }
 
 // AllocationSource returns the authoritative allocation for a Swarm task.
@@ -66,12 +68,13 @@ func (r *Resolver) Resolve(ctx context.Context, containerID string, env []string
 		return Plan{Passthrough: true}, nil
 	}
 
-	labels, err := r.Labels.ContainerLabels(ctx, containerID)
+	ctr, err := r.Labels.Container(ctx, containerID)
 	if err != nil {
-		return Plan{}, fmt.Errorf("read container labels: %w", err)
+		return Plan{}, fmt.Errorf("read container: %w", err)
 	}
+	labels := ctr.Labels
 	plan := Plan{TaskID: labels[LabelTaskID], ServiceID: labels[LabelServiceID], NodeID: labels[LabelNodeID]}
-	if plan.TaskID == "" || plan.ServiceID == "" || plan.NodeID == "" {
+	if plan.TaskID == "" || plan.ServiceID == "" || plan.NodeID == "" || !isSwarmTaskName(ctr.Name, plan.TaskID) {
 		return Plan{}, ErrNotSwarmTask
 	}
 
@@ -79,7 +82,8 @@ func (r *Resolver) Resolve(ctx context.Context, containerID string, env []string
 	if err != nil {
 		return plan, fmt.Errorf("lookup allocation for task %s: %w", plan.TaskID, err)
 	}
-	if alloc.TaskID != plan.TaskID || alloc.ServiceID != plan.ServiceID || alloc.NodeID != plan.NodeID {
+	if alloc.TaskID != plan.TaskID || alloc.ServiceID != plan.ServiceID || alloc.NodeID != plan.NodeID ||
+		(alloc.ContainerID != "" && alloc.ContainerID != containerID) {
 		return plan, fmt.Errorf("%w: task %s", ErrIdentityMismatch, plan.TaskID)
 	}
 	plan.Allocation = alloc
@@ -102,6 +106,17 @@ func (r *Resolver) Resolve(ctx context.Context, containerID string, env []string
 		}
 	}
 	return plan, nil
+}
+
+// isSwarmTaskName reports whether a Docker name has the executor's form "/<service>.<slot|node>.<taskID>".
+// Only Docker API callers can set names; images cannot.
+func isSwarmTaskName(name, taskID string) bool {
+	rest, ok := strings.CutPrefix(name, "/")
+	if !ok || strings.Contains(rest, "/") {
+		return false
+	}
+	prefix, ok := strings.CutSuffix(rest, "."+taskID)
+	return ok && strings.Contains(prefix, ".")
 }
 
 // hintedKinds returns configured kinds named by DOCKER_RESOURCE_* env entries, sorted.

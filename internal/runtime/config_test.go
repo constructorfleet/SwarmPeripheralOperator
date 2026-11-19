@@ -57,6 +57,26 @@ func TestLoadConfigRejectsInvalid(t *testing.T) {
 	}
 }
 
+func TestLoadForCommandIgnoresBrokenConfigOutsideCreate(t *testing.T) {
+	p := writeConfig(t, `{`)
+	if _, err := LoadForCommand(p, "create"); err == nil {
+		t.Fatal("create accepted malformed config")
+	}
+	for _, cmd := range []string{"start", "delete", "kill", "state", ""} {
+		cfg, err := LoadForCommand(p, cmd)
+		if err != nil || len(cfg.Kinds) != 0 {
+			t.Fatalf("%q: cfg=%+v err=%v, want defaults", cmd, cfg, err)
+		}
+	}
+}
+
+func TestLoadConfigKindWithoutSlashHasReadableError(t *testing.T) {
+	_, err := LoadConfig(writeConfig(t, `{"kinds":{"SPO_RNG":"nolash"},"controller":{"url":"https://c"}}`))
+	if err == nil || strings.Contains(err.Error(), "%!") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestLoadConfigRelativeRuncRejected(t *testing.T) {
 	_, err := LoadConfig(writeConfig(t, `{"runc":"runc"}`))
 	if err == nil || !strings.Contains(err.Error(), "absolute") {

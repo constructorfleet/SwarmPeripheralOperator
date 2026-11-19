@@ -32,7 +32,7 @@ func main() {
 	if cfgPath == "" {
 		cfgPath = runtime.DefaultConfigPath
 	}
-	cfg, err := runtime.LoadConfig(cfgPath)
+	cfg, err := runtime.LoadForCommand(cfgPath, inv.Command)
 	if err == nil && inv.Command == "create" {
 		err = prepare(cfg, inv)
 	}
@@ -42,7 +42,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	self, _ := os.Executable()
+	self, err := os.Executable()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "spo-runtime: locate self:", err)
+		os.Exit(1)
+	}
 	runc, err := runtime.FindRunc(cfg.Runc, self, runtime.DefaultRuncPaths)
 	if err != nil {
 		runtime.WriteRuncError(inv.LogPath, inv.LogFormat, err)

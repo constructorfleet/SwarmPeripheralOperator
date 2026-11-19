@@ -32,10 +32,13 @@ func WriteRuncError(path, format string, err error) {
 
 // FindRunc returns the configured runc or the first existing candidate that is not this binary.
 func FindRunc(configured, self string, candidates []string) (string, error) {
+	selfReal, _ := filepath.EvalSymlinks(self)
 	if configured != "" {
+		if real, err := filepath.EvalSymlinks(configured); err == nil && real == selfReal {
+			return "", errors.New("configured runc is spo-runtime itself")
+		}
 		return configured, nil
 	}
-	selfReal, _ := filepath.EvalSymlinks(self)
 	for _, c := range candidates {
 		real, err := filepath.EvalSymlinks(c)
 		if err != nil || real == selfReal {

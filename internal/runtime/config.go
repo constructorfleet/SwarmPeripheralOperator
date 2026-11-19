@@ -72,6 +72,16 @@ func LoadConfig(path string) (Config, error) {
 	return cfg, cfg.validate()
 }
 
+// LoadForCommand loads config strictly for create only. Other subcommands must keep
+// working with a broken config so existing containers can be stopped and deleted.
+func LoadForCommand(path, command string) (Config, error) {
+	cfg, err := LoadConfig(path)
+	if err != nil && command != "create" {
+		return Config{}, nil
+	}
+	return cfg, err
+}
+
 func (c Config) validate() error {
 	if c.Runc != "" && !filepath.IsAbs(c.Runc) {
 		return fmt.Errorf("runc path %q must be absolute", c.Runc)
@@ -80,8 +90,11 @@ func (c Config) validate() error {
 		if !swarmKindPattern.MatchString(swarmKind) {
 			return fmt.Errorf("swarm kind %q must match %s", swarmKind, swarmKindPattern)
 		}
+		if !strings.Contains(cdiKind, "/") {
+			return fmt.Errorf("CDI kind %q for %s must be vendor/class", cdiKind, swarmKind)
+		}
 		vendor, class := parser.ParseQualifier(cdiKind)
-		if err := errors.Join(parser.ValidateVendorName(vendor), parser.ValidateClassName(class)); err != nil || !strings.Contains(cdiKind, "/") {
+		if err := errors.Join(parser.ValidateVendorName(vendor), parser.ValidateClassName(class)); err != nil {
 			return fmt.Errorf("CDI kind %q for %s is invalid: %w", cdiKind, swarmKind, err)
 		}
 	}
