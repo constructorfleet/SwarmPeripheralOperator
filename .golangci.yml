@@ -1,4 +1,7 @@
 version: "2"
+run:
+  build-tags:
+    - integration
 linters:
   default: standard
   enable:
@@ -16,6 +19,12 @@ linters:
       rules:
         - name: exported
           disabled: true
+  exclusions:
+    rules:
+      # The integration harness exists to drive the docker CLI.
+      - path: tests/integration/
+        linters: [gosec]
+        text: G204
 formatters:
   enable:
     - gofmt

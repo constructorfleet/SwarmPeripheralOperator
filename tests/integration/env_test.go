@@ -1,6 +1,9 @@
 //go:build integration
 
-// Package integration runs the Phase 0 feasibility suite against a real two-node Swarm in Docker-in-Docker.
+// Package integration runs the Phase 0 feasibility suite against genuine Swarm tasks.
+//
+// SPO_IT_MODE=dind (default) builds a two-node Docker-in-Docker Swarm.
+// SPO_IT_MODE=host runs against an installed Swarm described by SPO_HIL_CONFIG.
 package integration
 
 import (
@@ -22,41 +25,54 @@ import (
 	"github.com/constructorfleet/SwarmPeripheralOperator/internal/pki"
 )
 
-// device is one SPO-managed device on the worker. Path must exist in the dind node.
-type device struct {
-	Kind, CDIKind, ID string
-	Candidates        []string // first existing host path wins
-	Path              string
-}
-
-// Real kernel devices outside Docker's default cgroup allowlist. /dev/full is a synthetic fallback.
-var devices = []*device{
-	{Kind: "SPO_RNG", CDIKind: "spo.local/rng", ID: "rng0", Candidates: []string{"/dev/hwrng", "/dev/full"}},
-	{Kind: "SPO_SERIAL", CDIKind: "spo.local/serial", ID: "serial0", Candidates: []string{"/dev/ttyS1", "/dev/ttyS0"}},
+// dindDevices are real kernel devices outside Docker's default cgroup allowlist. /dev/full is a synthetic fallback.
+func dindDevices() []*device {
+	return []*device{
+		{Kind: "SPO_RNG", cdiKind: "spo.local/rng", IDs: map[string]string{"rng0": ""}, candidates: []string{"/dev/hwrng", "/dev/full"}},
+		{Kind: "SPO_SERIAL", cdiKind: "spo.local/serial", IDs: map[string]string{"serial0": ""}, candidates: []string{"/dev/ttyS1", "/dev/ttyS0"}},
+	}
 }
 
 type env struct {
+	mode string
+	// device node identity, shared by both modes
+	nodeID        string
+	controllerSvc string
+	auditLog      string
+	probeImage    string
+	gpuImage      string
+	cudaImage     string
+	// host mode
+	managerHost string
+	// dind mode
 	id        string
 	image     string
 	network   string
 	manager   string
 	worker    string
 	managerIP string
-	workerID  string
 	dir       string
 }
 
 var e *env
 
 func TestMain(m *testing.M) {
-	os.Exit(run(m))
+	os.Exit(runSuite(m))
 }
 
-// run keeps os.Exit out of deferred code so panics and teardown are not swallowed.
-func run(m *testing.M) int {
-	err := setup()
-	if e != nil && os.Getenv("SPO_IT_KEEP") == "" {
-		defer e.teardown()
+// runSuite keeps os.Exit out of deferred code so panics and teardown are not swallowed.
+func runSuite(m *testing.M) int {
+	var err error
+	switch mode := os.Getenv("SPO_IT_MODE"); mode {
+	case "", modeDind:
+		err = setup()
+		if e != nil && os.Getenv("SPO_IT_KEEP") == "" {
+			defer e.teardown()
+		}
+	case modeHost:
+		err = setupHost()
+	default:
+		err = fmt.Errorf("unknown SPO_IT_MODE %q", mode)
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "setup failed:", err)
@@ -77,8 +93,10 @@ func setup() error {
 	if err != nil {
 		return err
 	}
-	en := &env{id: id, image: image, network: id, manager: id + "-mgr", worker: id + "-wkr", dir: dir}
+	en := &env{mode: modeDind, id: id, image: image, network: id, manager: id + "-mgr", worker: id + "-wkr", dir: dir,
+		controllerSvc: "spo-controller", auditLog: "/var/log/spo/runtime.jsonl", probeImage: "busybox:latest"}
 	e = en
+	devices = dindDevices()
 	fmt.Fprintf(os.Stderr, "feasibility env %s using %s\n", id, image)
 
 	steps := []struct {
@@ -94,6 +112,7 @@ func setup() error {
 			return fmt.Errorf("%s: %w", step.name, err)
 		}
 	}
+	logComponents()
 	return nil
 }
 
@@ -113,11 +132,11 @@ func (en *env) build() error {
 		return err
 	}
 	for _, cmd := range []string{"spo-runtime", "spo-controller"} {
-		c := exec.Command("go", "build", "-trimpath", "-o", filepath.Join(en.dir, "bin", cmd), "./cmd/"+cmd)
+		c := exec.CommandContext(context.Background(), "go", "build", "-trimpath", "-o", filepath.Join(en.dir, "bin", cmd), "./cmd/"+cmd)
 		c.Dir = root
 		c.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+strings.TrimSpace(arch))
 		if out, err := c.CombinedOutput(); err != nil {
-			return fmt.Errorf("build %s: %v: %s", cmd, err, out)
+			return fmt.Errorf("build %s: %w: %s", cmd, err, out)
 		}
 	}
 	return nil
@@ -139,7 +158,9 @@ func (en *env) startNodes() error {
 		if n.worker {
 			var res []string
 			for _, d := range devices {
-				res = append(res, d.Kind+"="+d.ID)
+				for id := range d.IDs {
+					res = append(res, d.Kind+"="+id)
+				}
 			}
 			daemon["node-generic-resources"] = res
 		}
@@ -166,9 +187,6 @@ func (en *env) startNodes() error {
 			return fmt.Errorf("dockerd on %s not ready", n)
 		}
 	}
-	if v, err := dexec(en.worker, "docker", "version", "-f", "{{range .Server.Components}}{{.Name}}={{.Version}} {{end}}"); err == nil {
-		fmt.Fprintf(os.Stderr, "engine components: %s\n", strings.TrimSpace(v))
-	}
 	ip, err := docker(ctx, "inspect", "-f", "{{(index .NetworkSettings.Networks \""+en.network+"\").IPAddress}}", en.manager)
 	en.managerIP = strings.TrimSpace(ip)
 	return err
@@ -186,7 +204,7 @@ func (en *env) formSwarm() error {
 		return err
 	}
 	id, err := dexec(en.worker, "docker", "info", "-f", "{{.Swarm.NodeID}}")
-	en.workerID = strings.TrimSpace(id)
+	en.nodeID = strings.TrimSpace(id)
 	return err
 }
 
@@ -217,7 +235,7 @@ func (en *env) configureNodes() error {
 		}
 		kinds := map[string]string{}
 		for _, d := range devices {
-			kinds[d.Kind] = d.CDIKind
+			kinds[d.Kind] = d.cdiKind
 		}
 		rt, _ := json.Marshal(map[string]any{
 			"runc":     "/usr/local/bin/runc",
@@ -239,19 +257,20 @@ func (en *env) configureNodes() error {
 	}
 
 	for _, d := range devices {
-		for _, c := range d.Candidates {
+		id := d.firstID()
+		for _, c := range d.candidates {
 			if _, err := dexec(en.worker, "test", "-c", c); err == nil {
-				d.Path = c
+				d.IDs[id] = c
 				break
 			}
 		}
-		if d.Path == "" {
+		if d.IDs[id] == "" {
 			return fmt.Errorf("no candidate device for %s on worker", d.Kind)
 		}
-		fmt.Fprintf(os.Stderr, "device %s=%s -> %s\n", d.Kind, d.ID, d.Path)
+		fmt.Fprintf(os.Stderr, "device %s=%s -> %s\n", d.Kind, id, d.IDs[id])
 		spec, _ := json.Marshal(map[string]any{
-			"cdiVersion": "0.6.0", "kind": d.CDIKind,
-			"devices": []any{map[string]any{"name": d.ID, "containerEdits": map[string]any{"deviceNodes": []any{map[string]string{"path": d.Path}}}}},
+			"cdiVersion": "0.6.0", "kind": d.cdiKind,
+			"devices": []any{map[string]any{"name": id, "containerEdits": map[string]any{"deviceNodes": []any{map[string]string{"path": d.IDs[id]}}}}},
 		})
 		if err := copyInto(en.worker, "/etc/cdi/spo-"+strings.ToLower(d.Kind)+".json", spec); err != nil {
 			return err
@@ -271,15 +290,15 @@ func (en *env) loadImages() error {
 			return err
 		}
 	}
-	img, err := exec.Command("docker", "save", "busybox:latest").Output()
+	img, err := exec.CommandContext(context.Background(), "docker", "save", "busybox:latest").Output()
 	if err != nil {
 		return err
 	}
 	for _, node := range []string{en.manager, en.worker} {
-		c := exec.Command("docker", "exec", "-i", node, "docker", "load", "-q")
+		c := exec.CommandContext(context.Background(), "docker", "exec", "-i", node, "docker", "load", "-q")
 		c.Stdin = bytes.NewReader(img)
 		if out, err := c.CombinedOutput(); err != nil {
-			return fmt.Errorf("load image on %s: %v: %s", node, err, out)
+			return fmt.Errorf("load image on %s: %w: %s", node, err, out)
 		}
 	}
 	return nil
@@ -315,7 +334,7 @@ func docker(ctx context.Context, args ...string) (string, error) {
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput()
 	if err != nil {
-		return string(out), fmt.Errorf("docker %s: %v: %s", strings.Join(args, " "), err, out)
+		return string(out), fmt.Errorf("docker %s: %w: %s", strings.Join(args, " "), err, out)
 	}
 	return string(out), nil
 }
@@ -325,21 +344,11 @@ func dexec(node string, args ...string) (string, error) {
 	return docker(context.Background(), append([]string{"exec", node}, args...)...)
 }
 
-// mgr runs the docker CLI against the Swarm manager.
-func mgr(args ...string) (string, error) {
-	return dexec(e.manager, append([]string{"docker"}, args...)...)
-}
-
-// wkr runs the docker CLI against the worker's local daemon.
-func wkr(args ...string) (string, error) {
-	return dexec(e.worker, append([]string{"docker"}, args...)...)
-}
-
 func copyInto(node, path string, data []byte) error {
-	c := exec.Command("docker", "exec", "-i", node, "sh", "-c", "mkdir -p \"$(dirname \"$1\")\" && cat > \"$1\"", "sh", path)
+	c := exec.CommandContext(context.Background(), "docker", "exec", "-i", node, "sh", "-c", "mkdir -p \"$(dirname \"$1\")\" && cat > \"$1\"", "sh", path)
 	c.Stdin = bytes.NewReader(data)
 	if out, err := c.CombinedOutput(); err != nil {
-		return fmt.Errorf("copy %s into %s: %v: %s", path, node, err, out)
+		return fmt.Errorf("copy %s into %s: %w: %s", path, node, err, out)
 	}
 	return nil
 }
