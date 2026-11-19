@@ -8,12 +8,16 @@ GOOS      ?= linux
 GOARCH    ?= $(shell $(GO) env GOARCH)
 CMDS      := $(notdir $(wildcard cmd/*))
 
-.PHONY: all test lint fmt fmt-check vet vuln secrets build check clean
+.PHONY: all test integration lint fmt fmt-check vet vuln secrets build check clean
 
 all: check
 
 test:
 	$(GO) test -race -count=1 ./...
+
+# Needs Docker with privileged containers. SPO_DIND_IMAGE selects the Engine under test.
+integration:
+	$(GO) test -tags integration -count=1 -timeout 30m -v ./tests/integration/
 
 lint:
 	golangci-lint run ./...
