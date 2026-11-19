@@ -8,6 +8,8 @@ on:
       - "internal/**"
       - "pkg/**"
       - "tests/integration/**"
+      - "tests/hil/**"
+      - "deployments/hil/**"
       - "go.mod"
       - "go.sum"
       - ".github/workflows/feasibility.yml"
@@ -37,3 +39,16 @@ jobs:
         env:
           SPO_DIND_IMAGE: ${{ matrix.dind }}
         run: make integration
+
+  hil-selftest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - name: Shellcheck
+        run: shellcheck -s sh deployments/hil/*.sh tests/hil/*.sh
+      - name: Install, host-mode suite, uninstall
+        run: make hil-selftest

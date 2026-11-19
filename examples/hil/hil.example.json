@@ -1,0 +1,6 @@
+{
+  "devices": [
+    {"kind": "SPO_GPU", "gpu": true, "ids": {"GPU-3f2a9c1e-0000-0000-0000-000000000000": "/dev/nvidia0"}},
+    {"kind": "SPO_USB", "ids": {"serial0": "/dev/ttyUSB0"}}
+  ]
+}
