@@ -151,6 +151,46 @@ func TestPolicyAllowsListedHooksAndMounts(t *testing.T) {
 	}
 }
 
+// Regression (#27): on usr-merged hosts /lib -> /usr/lib, so a mount path and its
+// target sit under different allowed prefixes.
+func TestPolicyMountPathAndTargetMayUseDifferentPrefixes(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	real := filepath.Join(root, "usr", "lib", "firmware")
+	if err := os.MkdirAll(real, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "lib")
+	if err := os.Symlink(filepath.Join(root, "usr", "lib"), link); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(root, "etc")
+	if err := os.MkdirAll(outside, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(real, "escape")); err != nil {
+		t.Fatal(err)
+	}
+
+	mountSpec := func(host string) string {
+		return `{"cdiVersion":"0.6.0","kind":"spo.local/rng","devices":[{"name":"d","containerEdits":{
+		  "mounts":[{"hostPath":"` + host + `","containerPath":"/lib/firmware","options":["ro","rbind"]}],
+		  "deviceNodes":[{"path":"/dev/null"}]}}]}`
+	}
+	p := basePolicy()
+	p.AllowedMountPrefixes = []string{filepath.Join(link, "firmware"), real}
+	if err := newInjector(t, mountSpec(filepath.Join(link, "firmware")), p).Inject(&oci.Spec{}, []string{"spo.local/rng=d"}); err != nil {
+		t.Fatalf("symlinked dir with both sides allowlisted rejected: %v", err)
+	}
+
+	err = newInjector(t, mountSpec(filepath.Join(real, "escape")), p).Inject(&oci.Spec{}, []string{"spo.local/rng=d"})
+	if err == nil || !strings.Contains(err.Error(), "outside allowed prefixes") {
+		t.Fatalf("err = %v, want rejection when the target leaves every prefix", err)
+	}
+}
+
 func TestPolicyValidatesSpecLevelEdits(t *testing.T) {
 	spec := `{"cdiVersion":"0.6.0","kind":"spo.local/rng",
 	  "containerEdits":{"hooks":[{"hookName":"createContainer","path":"/usr/bin/evil"}]},

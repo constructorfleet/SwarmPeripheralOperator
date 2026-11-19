@@ -31,7 +31,7 @@ On any failure in steps 4-8, the runtime writes a runc-format error to `--log` a
 |---|---|
 | Spec dirs and files owned by root, not group or world writable | CDI edits are host-privileged |
 | Hooks only from `allowedHooks` (exact path) | Hooks run as root on the host |
-| Mount host paths under `allowedMountPrefixes`, checked before and after symlink resolution | Prevents host file exposure |
+| Mount host path and its symlink-resolved target each under an `allowedMountPrefixes` entry (they may differ, e.g. `/lib` → `/usr/lib`) | Prevents host file exposure |
 | Mount type `bind` only; options limited to `bind rbind ro rw nosuid nodev noexec private rprivate slave rslave` | Blocks overlay/proc mounts and `suid`/`dev` |
 | Device paths clean, absolute, under `/dev` | Path traversal |
 | Host device `Lstat` must be a char/block node, and type and major:minor must match the spec | Symlink redirection, stale specs |

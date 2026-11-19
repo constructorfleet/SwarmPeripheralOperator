@@ -158,12 +158,20 @@ func (p Policy) checkMount(m *specs.Mount) error {
 	if err != nil || !isCleanAbs(m.HostPath) {
 		return fmt.Errorf("mount host path %q is invalid", m.HostPath)
 	}
+	// Path and target may match different prefixes: usr-merged hosts link /lib to /usr/lib.
+	if !p.mountAllowed(m.HostPath) || !p.mountAllowed(resolved) {
+		return fmt.Errorf("mount host path %q (resolves to %q) is outside allowed prefixes", m.HostPath, resolved)
+	}
+	return nil
+}
+
+func (p Policy) mountAllowed(path string) bool {
 	for _, prefix := range p.AllowedMountPrefixes {
-		if within(m.HostPath, prefix) && within(resolved, prefix) {
-			return nil
+		if within(path, prefix) {
+			return true
 		}
 	}
-	return fmt.Errorf("mount host path %q is outside allowed prefixes", m.HostPath)
+	return false
 }
 
 func (p Policy) checkDeviceNode(d *specs.DeviceNode) error {
