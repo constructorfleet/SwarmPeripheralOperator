@@ -31,7 +31,7 @@ type fakeTasks struct {
 func (f fakeTasks) Task(context.Context, string) (docker.Task, error) { return f.task, f.err }
 
 func runningTask() docker.Task {
-	return docker.Task{ID: "task1", ServiceID: "svc1", NodeID: "node1", DesiredState: "running", Version: 9,
+	return docker.Task{ID: "task1", ServiceID: "svc1", NodeID: "node1", DesiredState: "running", Version: 9, ContainerID: "c1",
 		Named: []api.Assignment{{Kind: "SPO_RNG", ID: "hwrng"}, {Kind: "OTHER", ID: "x"}}}
 }
 
@@ -63,7 +63,7 @@ func TestAllocationForOwningNodeFiltersKinds(t *testing.T) {
 	if rec.Code != 200 {
 		t.Fatalf("code = %d body=%s", rec.Code, rec.Body)
 	}
-	if a.TaskID != "task1" || a.ServiceID != "svc1" || a.NodeID != "node1" || a.TaskVersion != 9 {
+	if a.TaskID != "task1" || a.ServiceID != "svc1" || a.NodeID != "node1" || a.TaskVersion != 9 || a.ContainerID != "c1" {
 		t.Fatalf("allocation = %+v", a)
 	}
 	if len(a.Assignments) != 1 || a.Assignments[0].Kind != "SPO_RNG" {

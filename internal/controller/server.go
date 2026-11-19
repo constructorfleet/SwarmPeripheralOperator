@@ -66,7 +66,7 @@ func (s *Server) allocation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := api.Allocation{TaskID: task.ID, ServiceID: task.ServiceID, NodeID: task.NodeID, TaskVersion: task.Version, Assignments: []api.Assignment{}}
+	out := api.Allocation{TaskID: task.ID, ServiceID: task.ServiceID, NodeID: task.NodeID, TaskVersion: task.Version, ContainerID: task.ContainerID, Assignments: []api.Assignment{}}
 	for _, a := range task.Named {
 		if s.Kinds[a.Kind] {
 			out.Assignments = append(out.Assignments, a)
